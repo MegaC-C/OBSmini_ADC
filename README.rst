@@ -17,5 +17,5 @@ the "merged.hex" is used to drag´n´drop flash (doesn't work at first flash, an
 
 without DFU_OTA:
 
-the "zephyr.bin" is used to drag´n´drop flash (all these files are found in ...\myProjectFolder\build\zephyr)
+the "zephyr.bin" is used to drag´n´drop flash (all these files are found in ...\ myProjectFolder\ build\ zephyr)
 
