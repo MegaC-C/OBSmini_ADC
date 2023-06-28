@@ -311,11 +311,6 @@ nrfx_wdt_config_t wdt_config_normal = {
 	.reload_value 		= WDT_TIME_TO_RESET_MS,
 	.interrupt_priority = NRFX_WDT_DEFAULT_CONFIG_IRQ_PRIORITY};
 
-// nrfx_wdt_config_t wdt_config_instant_restart_after_DFU_OTA = {
-// 	.behaviour 			= NRF_WDT_BEHAVIOUR_PAUSE_SLEEP_HALT,
-// 	.reload_value 		= 1,
-// 	.interrupt_priority = NRFX_WDT_DEFAULT_CONFIG_IRQ_PRIORITY};
-
 
 // interrupt handlers ------------------------------------------------------------------------------------------------------------------------
 void ble_connected_handler(struct bt_conn *conn, uint8_t err) {
@@ -545,29 +540,6 @@ void nfc_init(void) {
 }
 
 void wdt_init() {
-	// uint32_t reset_reason = nrfx_reset_reason_get();
-	// LOG_INF("reset reason: %d", reset_reason);
-
-	// // there is an issue when doing DFU OTA which requires a RESET PIN restart of the system 
-	// if (reset_reason == NRFX_RESET_REASON_DOG_MASK) {
-	// 	nrfx_err = nrfx_wdt_init(&wdt_instance, &wdt_config_normal, wdt_handler);
-	// 	NRFX_ERR_CHECK(nrfx_err, "initializing watchdog failed");			
-	// } else {
-	// 	nrfx_err = nrfx_wdt_init(&wdt_instance, &wdt_config_instant_restart_after_DFU_OTA, wdt_handler);
-	// 	NRFX_ERR_CHECK(nrfx_err, "initializing watchdog failed");
-	// }
-
-	// // complete RESETREAS must be cleared to prevent false cumulative readings
-	// nrfx_reset_reason_clear(NRFX_RESET_REASON_RESETPIN_MASK	&&
-	// 						NRFX_RESET_REASON_DOG_MASK 		&&
-	// 						NRFX_RESET_REASON_SREQ_MASK 	&&
-	// 						NRFX_RESET_REASON_LOCKUP_MASK 	&&
-	// 						NRFX_RESET_REASON_OFF_MASK 		&&
-	// 						NRFX_RESET_REASON_LPCOMP_MASK 	&&
-	// 						NRFX_RESET_REASON_DIF_MASK 		&&
-	// 						NRFX_RESET_REASON_NFC_MASK 		&&
-	// 						NRFX_RESET_REASON_VBUS_MASK);
-
 	nrfx_err = nrfx_wdt_init(&wdt_instance, &wdt_config_normal, wdt_handler);
 	NRFX_ERR_CHECK(nrfx_err, "initializing watchdog failed");
 
