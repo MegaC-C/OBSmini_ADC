@@ -27,7 +27,6 @@
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci.h>
-// #include <zephyr/mgmt/mcumgr/transport/smp_bt.h>
 
 #include <nfc_t2t_lib.h>
 #include <nfc/ndef/msg.h>
@@ -621,8 +620,6 @@ void main(void) {
 	nrf_gpio_pin_set(RED_LED);
 	nrf_gpio_pin_set(OPAMPS_ON_OFF);
 
-	// err = smp_bt_register();
-	// ERR_CHECK(err, "Cannot enable Simple Management Protocol!");
 	bt_conn_cb_register(&bluetooth_callbacks);
 	err = bt_enable(NULL);
 	ERR_CHECK(err, "Cannot enable BLE!");
