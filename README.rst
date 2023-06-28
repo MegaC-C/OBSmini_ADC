@@ -7,7 +7,9 @@ Overview
 This code is written for the OBSmini with the aim to visualize the recieved echo signals as measured by the nRF52833. 
 The results can be used to tune limits/timings etc.
 Most code comes from official examples:
+
 NFC/Powermanagement:    nrf/samples/nfc/system_off
+
 SAADC/PPI:              https://github.com/NordicPlayground/nRF52-ADC-examples/tree/master/nrfx_saadc_multi_channel_ppi
 BLE:                    webinar: Developing Bluetooth Low Energy products using nRF Connect SDK
 PWM:                    nRF5_SDKv17.0.2/examples/peripheral/pwm_driver
