@@ -12,7 +12,7 @@ Building and Running
  
 with DFU_OTA:
 
-the "merged.hex" is used to drag´n´drop flash (doesn't work at first flash, any "zephyr.bin" must be flashed first) and the "app_update.bin" is used for DFU.
+the "merged.hex" is used to drag´n´drop flash and the "app_update.bin" is used for DFU.
 
 
 without DFU_OTA:

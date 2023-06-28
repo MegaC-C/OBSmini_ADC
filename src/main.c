@@ -7,7 +7,7 @@
 // BLE: webinar: Developing Bluetooth Low Energy products using nRF Connect SDK
 // PWM: nRF5_SDKv17.0.2/examples/peripheral/pwm_driver
 // DFU_OTA: https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/working_with_nrf/nrf52/developing.html#fota-updates
-// with DFU_OTA: the "merged.hex" is used to drag´n´drop flash (doesn't work at first flash, any "zephyr.bin" must be flashed first) and the "app_update.bin" is used for DFU.
+// with DFU_OTA: the "merged.hex" is used to drag´n´drop flash and the "app_update.bin" is used for DFU.
 // without DFU_OTA: the "zephyr.bin" is used to drag´n´drop flash (all these files are found in ...\myProjectFolder\build\zephyr)
 // MCUBoot: https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/app_dev/bootloaders_and_dfu/index.html
 //		and https://github.com/hellesvik-nordic/samples_for_nrf_connect_sdk/tree/1111836cd720127c7f2b0dc0bec9f7ef496b8954/bootloader_samples
@@ -595,7 +595,7 @@ void error_handling() {
 		nrf_gpio_pin_toggle(ERROR_LED);
 		k_msleep(200);
 	}
-	nrf_gpio_pin_set(ERROR_LED);
+	nrf_gpio_pin_clear(ERROR_LED);
 }
 
 void main(void) {
