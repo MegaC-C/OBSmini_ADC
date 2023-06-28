@@ -1,5 +1,5 @@
 // This code is written for the OBSmini with the aim to visualize the recieved echo signals as measured by the nRF52833. 
-// The results can be used to tune limits/timings etc.
+// The results can be used to tune limits/timings etc. Current: 5mA when connected and sampling, 8µA when off (deep sleeping waiting for NFC)
 //
 // Most code comes from official examples:
 // NFC/Powermanagement: nrf/samples/nfc/system_off
