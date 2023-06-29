@@ -18,27 +18,27 @@
 // https://github.com/zephyrproject-rtos/zephyr/pull/56309/commits/2094e19a3c58297125c1289ea0ddec89db317f96
 //
 //
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/pm/pm.h>
 #include <zephyr/pm/policy.h>
-#include <zephyr/init.h>
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/uuid.h>
-#include <zephyr/bluetooth/gatt.h>
-#include <zephyr/bluetooth/hci.h>
 
-#include <nfc_t2t_lib.h>
 #include <nfc/ndef/msg.h>
 #include <nfc/ndef/text_rec.h>
+#include <nfc_t2t_lib.h>
 
 #include <hal/nrf_gpio.h>
 #include <hal/nrf_power.h>
 
 #include <nrfx_ppi.h>
+#include <nrfx_pwm.h>
 #include <nrfx_saadc.h>
 #include <nrfx_timer.h>
-#include <nrfx_pwm.h>
 #include <nrfx_wdt.h>
 
 #include <helpers/nrfx_reset_reason.h>
@@ -49,45 +49,53 @@ void ble_disconnected_handler(struct bt_conn *conn, uint8_t reason);
 void ble_chrc_ccc_cfg_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
 void error_handling();
 
-#define NRFX_ERR_CHECK(nrfx_err, msg);  if (nrfx_err != NRFX_SUCCESS) {LOG_ERR(msg " - %d", nrfx_err); error_handling();}
-#define ERR_CHECK(err, msg);            if (err) {LOG_ERR(msg " - %d", err); error_handling();}
-#define NRFX_PWM_VALUES_LENGTH(array)   (sizeof(array) / (sizeof(uint16_t)))
+#define NRFX_ERR_CHECK(nrfx_err, msg)   \
+    if (nrfx_err != NRFX_SUCCESS)       \
+    {                                   \
+        LOG_ERR(msg " - %d", nrfx_err); \
+        error_handling();               \
+    }
+#define ERR_CHECK(err, msg)        \
+    if (err)                       \
+    {                              \
+        LOG_ERR(msg " - %d", err); \
+        error_handling();          \
+    }
+#define NRFX_PWM_VALUES_LENGTH(array) (sizeof(array) / (sizeof(uint16_t)))
 
-#define BT_UUID_REMOTE_SERV_VAL         BT_UUID_128_ENCODE(0xb088b5a1, 0x08fe, 0x46f2, 0xafaa, 0xc1c69c8917659)
-#define BT_UUID_REMOTE_SERVICE          BT_UUID_DECLARE_128(BT_UUID_REMOTE_SERV_VAL)
+#define BT_UUID_REMOTE_SERV_VAL        BT_UUID_128_ENCODE(0xb088b5a1, 0x08fe, 0x46f2, 0xafaa, 0xc1c69c8917659)
+#define BT_UUID_REMOTE_SERVICE         BT_UUID_DECLARE_128(BT_UUID_REMOTE_SERV_VAL)
+#define BT_UUID_REMOTE_BUTTON_CHRC_VAL BT_UUID_128_ENCODE(0xb088b5a2, 0x08fe, 0x46f2, 0xafaa, 0xc1c69c8917659)
+#define BT_UUID_REMOTE_BUTTON_CHRC     BT_UUID_DECLARE_128(BT_UUID_REMOTE_BUTTON_CHRC_VAL)
+#define BLE_DEVICE_NAME                CONFIG_BT_DEVICE_NAME
+#define BLE_DEVICE_NAME_LEN            (sizeof(BLE_DEVICE_NAME) - 1)
 
-#define BT_UUID_REMOTE_BUTTON_CHRC_VAL  BT_UUID_128_ENCODE(0xb088b5a2, 0x08fe, 0x46f2, 0xafaa, 0xc1c69c8917659)
-#define BT_UUID_REMOTE_BUTTON_CHRC      BT_UUID_DECLARE_128(BT_UUID_REMOTE_BUTTON_CHRC_VAL)
+#define BLUE_LED          NRF_GPIO_PIN_MAP(0, 17)
+#define RED_LED           NRF_GPIO_PIN_MAP(0, 20)
+#define SYSTEM_ON_LED     BLUE_LED
+#define BLE_CONNECTED_LED BLUE_LED
+#define NFC_FIELD_LED     RED_LED
+#define ERROR_LED         RED_LED
+#define TRAFO_L1          NRF_GPIO_PIN_MAP(0, 4)
+#define TRAFO_L2          NRF_GPIO_PIN_MAP(0, 5)
+#define TRAFO_R1          NRF_GPIO_PIN_MAP(0, 11)
+#define TRAFO_R2          NRF_GPIO_PIN_MAP(1, 9)
+#define OPAMPS_ON_OFF     NRF_GPIO_PIN_MAP(0, 15)
 
-#define BLE_DEVICE_NAME                 CONFIG_BT_DEVICE_NAME
-#define BLE_DEVICE_NAME_LEN             (sizeof(BLE_DEVICE_NAME) - 1)
-
-#define BLUE_LED                NRF_GPIO_PIN_MAP(0, 17)
-#define RED_LED                 NRF_GPIO_PIN_MAP(0, 20)
-#define SYSTEM_ON_LED           BLUE_LED
-#define BLE_CONNECTED_LED       BLUE_LED
-#define NFC_FIELD_LED           RED_LED
-#define ERROR_LED               RED_LED
-#define TRAFO_L1                NRF_GPIO_PIN_MAP(0, 4)
-#define TRAFO_L2                NRF_GPIO_PIN_MAP(0, 5)
-#define TRAFO_R1                NRF_GPIO_PIN_MAP(0, 11)
-#define TRAFO_R2                NRF_GPIO_PIN_MAP(1, 9)
-#define OPAMPS_ON_OFF           NRF_GPIO_PIN_MAP(0, 15)
-
-#define SAADC_BUF_SIZE          8000
-#define SAADC_SAMPLINGRATE_US   5 // sample every 5 µs to get the max possible 200 kHz SAADC
-#define MAX_REC_COUNT           1
-#define NDEF_MSG_BUF_SIZE       128
-#define PWM_MAX                 25 // must be lower than (2^16)/2 = 32768, 1 as MSB is the problem
-#define TIME_TO_SYSTEM_OFF_S    30
-#define WDT_TIME_TO_RESET_MS    300000 // 5min = 5*60000ms
-#define LEFT                    0
-#define RIGHT                   1
+#define SAADC_BUF_SIZE        8000
+#define SAADC_SAMPLINGRATE_US 5 // sample every 5 µs to get the max possible 200 kHz SAADC
+#define MAX_REC_COUNT         1
+#define NDEF_MSG_BUF_SIZE     128
+#define PWM_MAX               25 // must be lower than (2^16)/2 = 32768, 1 as MSB is the problem
+#define TIME_TO_SYSTEM_OFF_S  30
+#define WDT_TIME_TO_RESET_MS  300000 // 5min = 5*60000ms
+#define LEFT                  0
+#define RIGHT                 1
 
 // pre kernel initialization ------------------------------------------------------------------------------------------------------------------------
 LOG_MODULE_REGISTER(logging, LOG_LEVEL_DBG);
 int nrfx_err = NRFX_SUCCESS;
-int err = 0;
+int err      = 0;
 
 // Prevent deep sleep (system off) from being entered on long timeouts
 // or `K_FOREVER` due to the default residency policy.
@@ -114,7 +122,7 @@ int set_REGOUT0_to_3V0(void)
         {
         }
         NRF_UICR->REGOUT0 = (NRF_UICR->REGOUT0 & ~((uint32_t)UICR_REGOUT0_VOUT_Msk)) | (UICR_REGOUT0_VOUT_3V0 << UICR_REGOUT0_VOUT_Pos);
-        NRF_NVMC->CONFIG = NVMC_CONFIG_WEN_Ren << NVMC_CONFIG_WEN_Pos;
+        NRF_NVMC->CONFIG  = NVMC_CONFIG_WEN_Ren << NVMC_CONFIG_WEN_Pos;
         while (NRF_NVMC->READY == NVMC_READY_READY_Busy)
         {
         }
@@ -141,7 +149,7 @@ const struct bt_data ad[] = {
     BT_DATA(BT_DATA_NAME_COMPLETE, BLE_DEVICE_NAME, BLE_DEVICE_NAME_LEN)};
 
 struct bt_conn_cb bluetooth_callbacks = {
-    .connected = ble_connected_handler,
+    .connected    = ble_connected_handler,
     .disconnected = ble_disconnected_handler};
 
 const int8_t ble_left_sensor_flag[2]     = {0b00000000, 0b10000000};
@@ -152,48 +160,48 @@ bool ble_notif_enabled = false;
 
 // SAADC ------------------------------------------------------------------------------------------------------------------------
 nrfx_saadc_adv_config_t saadc_peripheral_config = {
-    .oversampling = NRF_SAADC_OVERSAMPLE_DISABLED,
-    .burst = NRF_SAADC_BURST_DISABLED,
+    .oversampling      = NRF_SAADC_OVERSAMPLE_DISABLED,
+    .burst             = NRF_SAADC_BURST_DISABLED,
     .internal_timer_cc = 0,
-    .start_on_end = true};
+    .start_on_end      = true};
 
 nrfx_saadc_channel_t saadc_left_sensor_channel_config = {
     .channel_config = {
         .resistor_p = NRF_SAADC_RESISTOR_DISABLED,
         .resistor_n = NRF_SAADC_RESISTOR_DISABLED,
-        .gain = NRF_SAADC_GAIN1_2,
-        .reference = NRF_SAADC_REFERENCE_VDD4,
-        .acq_time = NRF_SAADC_ACQTIME_3US,
-        .mode = NRF_SAADC_MODE_SINGLE_ENDED,
-        .burst = NRF_SAADC_BURST_DISABLED},
-    .pin_p = (nrf_saadc_input_t)NRF_SAADC_INPUT_AIN1,
-    .pin_n = NRF_SAADC_INPUT_DISABLED,
+        .gain       = NRF_SAADC_GAIN1_2,
+        .reference  = NRF_SAADC_REFERENCE_VDD4,
+        .acq_time   = NRF_SAADC_ACQTIME_3US,
+        .mode       = NRF_SAADC_MODE_SINGLE_ENDED,
+        .burst      = NRF_SAADC_BURST_DISABLED},
+    .pin_p         = (nrf_saadc_input_t)NRF_SAADC_INPUT_AIN1,
+    .pin_n         = NRF_SAADC_INPUT_DISABLED,
     .channel_index = 0};
 
 nrfx_saadc_channel_t saadc_right_sensor_channel_config = {
     .channel_config = {
         .resistor_p = NRF_SAADC_RESISTOR_DISABLED,
         .resistor_n = NRF_SAADC_RESISTOR_DISABLED,
-        .gain = NRF_SAADC_GAIN1_2,
-        .reference = NRF_SAADC_REFERENCE_VDD4,
-        .acq_time = NRF_SAADC_ACQTIME_3US,
-        .mode = NRF_SAADC_MODE_SINGLE_ENDED,
-        .burst = NRF_SAADC_BURST_DISABLED},
-    .pin_p = (nrf_saadc_input_t)NRF_SAADC_INPUT_AIN4,
-    .pin_n = NRF_SAADC_INPUT_DISABLED,
+        .gain       = NRF_SAADC_GAIN1_2,
+        .reference  = NRF_SAADC_REFERENCE_VDD4,
+        .acq_time   = NRF_SAADC_ACQTIME_3US,
+        .mode       = NRF_SAADC_MODE_SINGLE_ENDED,
+        .burst      = NRF_SAADC_BURST_DISABLED},
+    .pin_p         = (nrf_saadc_input_t)NRF_SAADC_INPUT_AIN4,
+    .pin_n         = NRF_SAADC_INPUT_DISABLED,
     .channel_index = 1};
 
 nrfx_saadc_channel_t saadc_battery_voltage_channel_config = {
     .channel_config = {
         .resistor_p = NRF_SAADC_RESISTOR_DISABLED,
         .resistor_n = NRF_SAADC_RESISTOR_DISABLED,
-        .gain = NRF_SAADC_GAIN1_2,
-        .reference = NRF_SAADC_REFERENCE_INTERNAL,
-        .acq_time = NRF_SAADC_ACQTIME_40US,
-        .mode = NRF_SAADC_MODE_SINGLE_ENDED,
-        .burst = NRF_SAADC_BURST_DISABLED},
-    .pin_p = (nrf_saadc_input_t)NRF_SAADC_INPUT_VDDHDIV5,
-    .pin_n = NRF_SAADC_INPUT_DISABLED,
+        .gain       = NRF_SAADC_GAIN1_2,
+        .reference  = NRF_SAADC_REFERENCE_INTERNAL,
+        .acq_time   = NRF_SAADC_ACQTIME_40US,
+        .mode       = NRF_SAADC_MODE_SINGLE_ENDED,
+        .burst      = NRF_SAADC_BURST_DISABLED},
+    .pin_p         = (nrf_saadc_input_t)NRF_SAADC_INPUT_VDDHDIV5,
+    .pin_n         = NRF_SAADC_INPUT_DISABLED,
     .channel_index = 2};
 
 nrf_saadc_value_t saadc_samples[SAADC_BUF_SIZE];
@@ -203,11 +211,11 @@ bool saadc_buffer_is_full = false;
 const nrfx_timer_t timer_to_sample_saadc_via_ppi_instance = NRFX_TIMER_INSTANCE(1);
 
 nrfx_timer_config_t timer_to_sample_saadc_via_ppi_config = {
-    .frequency = NRF_TIMER_FREQ_1MHz,
-    .mode = NRF_TIMER_MODE_TIMER,
-    .bit_width = NRF_TIMER_BIT_WIDTH_8,
+    .frequency          = NRF_TIMER_FREQ_1MHz,
+    .mode               = NRF_TIMER_MODE_TIMER,
+    .bit_width          = NRF_TIMER_BIT_WIDTH_8,
     .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,
-    .p_context = NULL};
+    .p_context          = NULL};
 
 nrf_ppi_channel_t timer_to_sample_saadc_via_ppi_channel;
 
@@ -220,12 +228,12 @@ nrfx_pwm_config_t const pwm_for_ultrasonic_pulses_peripheral_config = {
         TRAFO_R1,
         TRAFO_L2,
         TRAFO_R2},
-    .irq_priority = NRFX_PWM_DEFAULT_CONFIG_IRQ_PRIORITY,
-    .base_clock = NRF_PWM_CLK_2MHz,
-    .count_mode = NRF_PWM_MODE_UP,
-    .top_value = PWM_MAX,
-    .load_mode = NRF_PWM_LOAD_GROUPED,
-    .step_mode = NRF_PWM_STEP_AUTO,
+    .irq_priority  = NRFX_PWM_DEFAULT_CONFIG_IRQ_PRIORITY,
+    .base_clock    = NRF_PWM_CLK_2MHz,
+    .count_mode    = NRF_PWM_MODE_UP,
+    .top_value     = PWM_MAX,
+    .load_mode     = NRF_PWM_LOAD_GROUPED,
+    .step_mode     = NRF_PWM_STEP_AUTO,
     .skip_gpio_cfg = false};
 // TRAFO_L1  NRFX_PWM_PIN_NOT_USED
 // TRAFO_R1  NRFX_PWM_PIN_NOT_USED
@@ -254,35 +262,35 @@ static nrf_pwm_values_grouped_t /*const*/ pwm_20pulses[] = {
 
 const nrf_pwm_sequence_t pwm_4plus1pulses_seq = {
     .values.p_grouped = pwm_4plus1pulses,
-    .length = NRFX_PWM_VALUES_LENGTH(pwm_4plus1pulses),
-    .repeats = 0,
-    .end_delay = 0};
+    .length           = NRFX_PWM_VALUES_LENGTH(pwm_4plus1pulses),
+    .repeats          = 0,
+    .end_delay        = 0};
 
 const nrf_pwm_sequence_t pwm_5pulses_seq = {
     .values.p_grouped = pwm_5pulses,
-    .length = NRFX_PWM_VALUES_LENGTH(pwm_5pulses),
-    .repeats = 0,
-    .end_delay = 0};
+    .length           = NRFX_PWM_VALUES_LENGTH(pwm_5pulses),
+    .repeats          = 0,
+    .end_delay        = 0};
 
 const nrf_pwm_sequence_t pwm_19plus1pulses_seq = {
     .values.p_grouped = pwm_19plus1pulses,
-    .length = NRFX_PWM_VALUES_LENGTH(pwm_19plus1pulses),
-    .repeats = 0,
-    .end_delay = 0};
+    .length           = NRFX_PWM_VALUES_LENGTH(pwm_19plus1pulses),
+    .repeats          = 0,
+    .end_delay        = 0};
 
 const nrf_pwm_sequence_t pwm_20pulses_seq = {
     .values.p_grouped = pwm_20pulses,
-    .length = NRFX_PWM_VALUES_LENGTH(pwm_20pulses),
-    .repeats = 0,
-    .end_delay = 0};
+    .length           = NRFX_PWM_VALUES_LENGTH(pwm_20pulses),
+    .repeats          = 0,
+    .end_delay        = 0};
 
 // NFC ------------------------------------------------------------------------------------------------------------------------
 // text messages and language code
-const uint8_t pulses_4_payload[] = {'4', '+', '1', ' ', 'p', 'u', 'l', 's', 'e', 's'};
-const uint8_t pulses_5_payload[] = {'5', ' ', 'p', 'u', 'l', 's', 'e', 's'};
+const uint8_t pulses_4_payload[]  = {'4', '+', '1', ' ', 'p', 'u', 'l', 's', 'e', 's'};
+const uint8_t pulses_5_payload[]  = {'5', ' ', 'p', 'u', 'l', 's', 'e', 's'};
 const uint8_t pulses_19_payload[] = {'1', '9', '+', '1', ' ', 'p', 'u', 'l', 's', 'e', 's'};
 const uint8_t pulses_20_payload[] = {'2', '0', ' ', 'p', 'u', 'l', 's', 'e', 's'};
-const uint8_t en_code[] = {'e', 'n'};
+const uint8_t en_code[]           = {'e', 'n'};
 
 // buffers used to hold NFC NDEF messages
 uint8_t pulses_4_buffer[NDEF_MSG_BUF_SIZE];
@@ -290,21 +298,21 @@ uint8_t pulses_5_buffer[NDEF_MSG_BUF_SIZE];
 uint8_t pulses_19_buffer[NDEF_MSG_BUF_SIZE];
 uint8_t pulses_20_buffer[NDEF_MSG_BUF_SIZE];
 
-uint32_t pulses_4_buffer_length = sizeof(pulses_4_buffer);
-uint32_t pulses_5_buffer_length = sizeof(pulses_5_buffer);
+uint32_t pulses_4_buffer_length  = sizeof(pulses_4_buffer);
+uint32_t pulses_5_buffer_length  = sizeof(pulses_5_buffer);
 uint32_t pulses_19_buffer_length = sizeof(pulses_19_buffer);
 uint32_t pulses_20_buffer_length = sizeof(pulses_20_buffer);
 
 uint8_t pulse_number = 4;
-bool nfc_detected = false;
+bool nfc_detected    = false;
 
 // WDT ------------------------------------------------------------------------------------------------------------------------
 const nrfx_wdt_t wdt_instance = NRFX_WDT_INSTANCE(0);
 nrfx_wdt_channel_id wdt_channel_0;
 
 nrfx_wdt_config_t wdt_config_normal = {
-    .behaviour = NRF_WDT_BEHAVIOUR_PAUSE_SLEEP_HALT,
-    .reload_value = WDT_TIME_TO_RESET_MS,
+    .behaviour          = NRF_WDT_BEHAVIOUR_PAUSE_SLEEP_HALT,
+    .reload_value       = WDT_TIME_TO_RESET_MS,
     .interrupt_priority = NRFX_WDT_DEFAULT_CONFIG_IRQ_PRIORITY};
 
 // interrupt handlers ------------------------------------------------------------------------------------------------------------------------
