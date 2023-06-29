@@ -81,8 +81,10 @@ void error_handling();
 #define MAX_REC_COUNT		            1
 #define NDEF_MSG_BUF_SIZE	            128
 #define PWM_MAX	                        25   	// must be lower than (2^16)/2 = 32768, 1 as MSB is the problem
-#define TIME_TO_DEEPSLEEP_S            	30
+#define TIME_TO_SYSTEM_OFF_S            30
 #define WDT_TIME_TO_RESET_MS			300000	// 5min = 5*60000ms
+#define LEFT							0
+#define RIGHT							1
 
 
 // pre kernel initialization ------------------------------------------------------------------------------------------------------------------------
@@ -130,7 +132,7 @@ BT_GATT_SERVICE_DEFINE(remote_srv,
                     NULL, NULL, NULL),
     				BT_GATT_CCC(ble_chrc_ccc_cfg_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE));	
 
-struct bt_conn *current_conn;
+struct bt_conn *current_ble_conn;
 
 const struct bt_data ad[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -140,8 +142,9 @@ struct bt_conn_cb bluetooth_callbacks = {
 	.connected 		= ble_connected_handler,
 	.disconnected 	= ble_disconnected_handler};
 
-const int8_t ble_even_flag[2] 	= {0b00000000, 0b10000000};
-const int8_t ble_uneven_flag[2] = {0b00000001, 0b10000000};
+const int8_t ble_left_sensor_flag[2] 		= {0b00000000, 0b10000000};
+const int8_t ble_right_sensor_flag[2] 		= {0b00000001, 0b10000000};
+const int8_t ble_battery_voltage_flag[2]	= {0b00000010, 0b10000000};
 int8_t ble_send_array[2];
 bool ble_notif_enabled = false;
 
@@ -153,7 +156,7 @@ nrfx_saadc_adv_config_t saadc_peripheral_config = {
         .internal_timer_cc = 0,                            
         .start_on_end      = true};
 
-nrfx_saadc_channel_t saadc_channel_0_config = {                                                  
+nrfx_saadc_channel_t saadc_left_sensor_channel_config = {                                                  
     .channel_config = {                                              
         .resistor_p = NRF_SAADC_RESISTOR_DISABLED, 
         .resistor_n = NRF_SAADC_RESISTOR_DISABLED, 
@@ -166,7 +169,7 @@ nrfx_saadc_channel_t saadc_channel_0_config = {
     .pin_n          = NRF_SAADC_INPUT_DISABLED,    
     .channel_index  = 0};
 
-nrfx_saadc_channel_t saadc_channel_1_config = {                                                  
+nrfx_saadc_channel_t saadc_right_sensor_channel_config = {                                                  
     .channel_config = {                                              
         .resistor_p = NRF_SAADC_RESISTOR_DISABLED, 
         .resistor_n = NRF_SAADC_RESISTOR_DISABLED, 
@@ -179,27 +182,40 @@ nrfx_saadc_channel_t saadc_channel_1_config = {
     .pin_n          = NRF_SAADC_INPUT_DISABLED,    
     .channel_index  = 1};
 
+nrfx_saadc_channel_t saadc_battery_voltage_channel_config = {                                                  
+    .channel_config = {                                              
+        .resistor_p = NRF_SAADC_RESISTOR_DISABLED, 
+        .resistor_n = NRF_SAADC_RESISTOR_DISABLED, 
+        .gain       = NRF_SAADC_GAIN1_2,           
+        .reference  = NRF_SAADC_REFERENCE_INTERNAL,
+        .acq_time   = NRF_SAADC_ACQTIME_40US,      
+        .mode       = NRF_SAADC_MODE_SINGLE_ENDED, 
+        .burst      = NRF_SAADC_BURST_DISABLED},                                             
+    .pin_p          = (nrf_saadc_input_t)NRF_SAADC_INPUT_VDDHDIV5,   
+    .pin_n          = NRF_SAADC_INPUT_DISABLED,    
+    .channel_index  = 2};
+
 nrf_saadc_value_t saadc_samples[SAADC_BUF_SIZE];
 bool saadc_buffer_is_full = false;
 
 
 // TIMER/PPI ------------------------------------------------------------------------------------------------------------------------
-const nrfx_timer_t timer_to_sample_saadc = NRFX_TIMER_INSTANCE(1);
+const nrfx_timer_t timer_to_sample_saadc_via_ppi_instance = NRFX_TIMER_INSTANCE(1);
 
-nrfx_timer_config_t timer_config = {                                                                
+nrfx_timer_config_t timer_to_sample_saadc_via_ppi_config = {                                                                
         .frequency          = NRF_TIMER_FREQ_1MHz,                  
         .mode               = NRF_TIMER_MODE_TIMER,                  
         .bit_width          = NRF_TIMER_BIT_WIDTH_8,                
         .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,
         .p_context          = NULL};
 		
-nrf_ppi_channel_t timer_to_saadc_ppi_channel;
+nrf_ppi_channel_t timer_to_sample_saadc_via_ppi_channel;
 
 
 // PWM ------------------------------------------------------------------------------------------------------------------------
-nrfx_pwm_t my_pwm = NRFX_PWM_INSTANCE(0);  
+nrfx_pwm_t pwm_for_ultrasonic_pulses_instance = NRFX_PWM_INSTANCE(0);  
 
-nrfx_pwm_config_t const pwm_peripheral_config = {
+nrfx_pwm_config_t const pwm_for_ultrasonic_pulses_peripheral_config = {
 	.output_pins = {
 	    TRAFO_L1,
         TRAFO_R1,
@@ -318,16 +334,16 @@ void ble_connected_handler(struct bt_conn *conn, uint8_t err) {
 		return;
 	}
 	LOG_INF("Connected.");
-	current_conn = bt_conn_ref(conn);
+	current_ble_conn = bt_conn_ref(conn);
 	nrf_gpio_pin_clear(BLE_CONNECTED_LED);
     }
 
 void ble_disconnected_handler(struct bt_conn *conn, uint8_t reason) {
 	LOG_INF("Disconnected (reason: %d)", reason);
 	nrf_gpio_pin_set(BLE_CONNECTED_LED);
-    if (current_conn) {
-		bt_conn_unref(current_conn);
-		current_conn = NULL;
+    if (current_ble_conn) {
+		bt_conn_unref(current_ble_conn);
+		current_ble_conn = NULL;
 	}
 }
 
@@ -340,14 +356,14 @@ void saadc_handler(nrfx_saadc_evt_t const * p_event) {
     switch (p_event->type) {
 		case NRFX_SAADC_EVT_DONE:
 			saadc_buffer_is_full = true;
-			nrfx_timer_disable(&timer_to_sample_saadc);	// should be called in NRFX_SAADC_EVT_FINISHED, but that event was never generated,
+			nrfx_timer_disable(&timer_to_sample_saadc_via_ppi_instance);	// should be called in NRFX_SAADC_EVT_FINISHED, but that event was never generated,
 			break;                                  // perhaps because one dimensional buffer was used instead of double buffer?
 		case NRFX_SAADC_EVT_BUF_REQ:
 			nrfx_err = nrfx_saadc_buffer_set(&saadc_samples[0], SAADC_BUF_SIZE);
 			NRFX_ERR_CHECK(nrfx_err, " failed");
 			break;
 		case NRFX_SAADC_EVT_READY:
-			nrfx_timer_enable(&timer_to_sample_saadc);
+			nrfx_timer_enable(&timer_to_sample_saadc_via_ppi_instance);
 			break;
         default:
             LOG_INF("SAADC evt %d", p_event->type);
@@ -370,25 +386,25 @@ void nfc_handler(void *context,
 		switch (pulse_number) {
 		case 4:
 			pulse_number = 5;
-			nrfx_pwm_simple_playback(&my_pwm, &pwm_5pulses_seq, 1, NRFX_PWM_FLAG_STOP);
+			nrfx_pwm_simple_playback(&pwm_for_ultrasonic_pulses_instance, &pwm_5pulses_seq, 1, NRFX_PWM_FLAG_STOP);
 			err = nfc_t2t_payload_set(pulses_19_buffer, pulses_19_buffer_length);
 			ERR_CHECK(err, "Cannot set NFC payload!");
 			break;		
 		case 5:
 			pulse_number = 19;
-			nrfx_pwm_simple_playback(&my_pwm, &pwm_19plus1pulses_seq, 1, NRFX_PWM_FLAG_STOP);
+			nrfx_pwm_simple_playback(&pwm_for_ultrasonic_pulses_instance, &pwm_19plus1pulses_seq, 1, NRFX_PWM_FLAG_STOP);
 			err = nfc_t2t_payload_set(pulses_20_buffer, pulses_20_buffer_length);
 			ERR_CHECK(err, "Cannot set NFC payload!");
 			break;
 		case 19:
 			pulse_number = 20;
-			nrfx_pwm_simple_playback(&my_pwm, &pwm_20pulses_seq, 1, NRFX_PWM_FLAG_STOP);
+			nrfx_pwm_simple_playback(&pwm_for_ultrasonic_pulses_instance, &pwm_20pulses_seq, 1, NRFX_PWM_FLAG_STOP);
 			err = nfc_t2t_payload_set(pulses_4_buffer, pulses_4_buffer_length);
 			ERR_CHECK(err, "Cannot set NFC payload!");
 			break;
 		case 20:
 			pulse_number = 4;
-			nrfx_pwm_simple_playback(&my_pwm, &pwm_4plus1pulses_seq, 1, NRFX_PWM_FLAG_STOP);
+			nrfx_pwm_simple_playback(&pwm_for_ultrasonic_pulses_instance, &pwm_4plus1pulses_seq, 1, NRFX_PWM_FLAG_STOP);
 			err = nfc_t2t_payload_set(pulses_5_buffer, pulses_5_buffer_length);
 			ERR_CHECK(err, "Cannot set NFC payload!");
 			break;
@@ -419,51 +435,53 @@ void wdt_handler(void) {
 
 // functions ------------------------------------------------------------------------------------------------------------------------
 void timer_init(void) {
-    nrfx_err = nrfx_timer_init(&timer_to_sample_saadc, &timer_config, NULL);
+    nrfx_err = nrfx_timer_init(&timer_to_sample_saadc_via_ppi_instance, 
+							   &timer_to_sample_saadc_via_ppi_config, 
+							   NULL);
     NRFX_ERR_CHECK(nrfx_err, " failed");
 
-    nrfx_timer_extended_compare(&timer_to_sample_saadc,
+    nrfx_timer_extended_compare(&timer_to_sample_saadc_via_ppi_instance,
                                 NRF_TIMER_CC_CHANNEL0,
-                                nrfx_timer_us_to_ticks(&timer_to_sample_saadc, SAADC_SAMPLINGRATE_US),
+                                nrfx_timer_us_to_ticks(&timer_to_sample_saadc_via_ppi_instance, SAADC_SAMPLINGRATE_US),
                                 NRF_TIMER_SHORT_COMPARE0_CLEAR_MASK,
                                 false);
 }
 
 void ppi_init(void) {
-    nrfx_err = nrfx_ppi_channel_alloc(&timer_to_saadc_ppi_channel);
+    nrfx_err = nrfx_ppi_channel_alloc(&timer_to_sample_saadc_via_ppi_channel);
     NRFX_ERR_CHECK(nrfx_err, " failed");
 
-    nrfx_err = nrfx_ppi_channel_assign(timer_to_saadc_ppi_channel, 
-                                       nrfx_timer_event_address_get(&timer_to_sample_saadc, NRF_TIMER_EVENT_COMPARE0),
+    nrfx_err = nrfx_ppi_channel_assign(timer_to_sample_saadc_via_ppi_channel, 
+                                       nrfx_timer_event_address_get(&timer_to_sample_saadc_via_ppi_instance, NRF_TIMER_EVENT_COMPARE0),
                                        nrf_saadc_task_address_get((NRF_SAADC_Type * const) NRF_SAADC_BASE, NRF_SAADC_TASK_SAMPLE));
     NRFX_ERR_CHECK(nrfx_err, " failed");
 
-    nrfx_err = nrfx_ppi_channel_enable(timer_to_saadc_ppi_channel);
+    nrfx_err = nrfx_ppi_channel_enable(timer_to_sample_saadc_via_ppi_channel);
     NRFX_ERR_CHECK(nrfx_err, " failed");
 }
 
 void saadc_init(void) {
     nrfx_err = nrfx_saadc_init(NRFX_SAADC_DEFAULT_CONFIG_IRQ_PRIORITY);
-    NRFX_ERR_CHECK(nrfx_err, " failed");
+    NRFX_ERR_CHECK(nrfx_err, "initializing SAADC peripheral failed");
 
 	nrfx_err = nrfx_saadc_offset_calibrate(NULL);
 	NRFX_ERR_CHECK(nrfx_err, "Cannot calibrate SAADC")
 
-    nrfx_err = nrfx_saadc_channel_config(&saadc_channel_0_config);
-    nrfx_err = nrfx_saadc_channel_config(&saadc_channel_1_config);
-    NRFX_ERR_CHECK(nrfx_err, " failed");
+    nrfx_err = nrfx_saadc_channel_config(&saadc_left_sensor_channel_config);
+    nrfx_err = nrfx_saadc_channel_config(&saadc_right_sensor_channel_config);
+    NRFX_ERR_CHECK(nrfx_err, "Configuring SAADC channels failed");
 
     nrfx_err = nrfx_saadc_advanced_mode_set(nrfx_saadc_channels_configured_get(),
                                             NRF_SAADC_RESOLUTION_12BIT,
                                             &saadc_peripheral_config,
                                             saadc_handler);
-    NRFX_ERR_CHECK(nrfx_err, " failed");
+    NRFX_ERR_CHECK(nrfx_err, "setting SAADC mode failed");
                                             
     nrfx_err = nrfx_saadc_buffer_set(&saadc_samples[0], SAADC_BUF_SIZE);
-    NRFX_ERR_CHECK(nrfx_err, " failed");
+    NRFX_ERR_CHECK(nrfx_err, "setting SAADC buffer failed failed");
 
     nrfx_err = nrfx_saadc_mode_trigger();
-    NRFX_ERR_CHECK(nrfx_err, " failed");
+    NRFX_ERR_CHECK(nrfx_err, "triggering SAADC mode failed");
 }
 
 void nfc_init(void) {
@@ -548,6 +566,90 @@ void wdt_init() {
 	nrfx_wdt_enable(&wdt_instance);
 }
 
+// https://devzone.nordicsemi.com/f/nordic-q-a/50415/sending-32-bit-of-data-over-ble-onto-nrf52832
+void encode_16bit_to_8bit_array(int16_t *data_array, int8_t *ble_send_array, uint16_t data_length) {
+    memcpy(ble_send_array, data_array, data_length);
+}
+
+void send_sensor_values(int left_right) {
+	if (LEFT == left_right) {
+		err = bt_gatt_notify(current_ble_conn, &remote_srv.attrs[2], ble_left_sensor_flag, sizeof(ble_left_sensor_flag));
+	} else if (RIGHT == left_right) {
+		err = bt_gatt_notify(current_ble_conn, &remote_srv.attrs[2], ble_right_sensor_flag, sizeof(ble_right_sensor_flag));
+	} else {
+		LOG_ERR("Wrong sensor selected!");
+		return;
+	}
+	ERR_CHECK(err, "BLE notification failed");
+
+	for (int i = left_right; i < SAADC_BUF_SIZE; i+=2) {
+		encode_16bit_to_8bit_array(&saadc_samples[i], ble_send_array, 2);
+		if (!ble_notif_enabled) break;
+		err = bt_gatt_notify(current_ble_conn, &remote_srv.attrs[2], ble_send_array, sizeof(ble_send_array));
+		ERR_CHECK(err, "BLE notification failed");
+	}
+}
+
+void get_and_send_battery_voltage_mV () {
+	// reinitialize SAADC for single VDDH (battery voltage) conversion in blocking mode
+	nrfx_saadc_uninit();
+
+	nrfx_err = nrfx_saadc_init(NRFX_SAADC_DEFAULT_CONFIG_IRQ_PRIORITY);
+    NRFX_ERR_CHECK(nrfx_err, "initializing SAADC peripheral failed");
+
+	nrfx_err = nrfx_saadc_offset_calibrate(NULL);
+	NRFX_ERR_CHECK(nrfx_err, "Cannot calibrate SAADC")
+
+    nrfx_err = nrfx_saadc_channel_config(&saadc_battery_voltage_channel_config);
+    NRFX_ERR_CHECK(nrfx_err, "Configuring SAADC channels failed");
+
+    nrfx_err = nrfx_saadc_simple_mode_set(nrfx_saadc_channels_configured_get(),
+                                          NRF_SAADC_RESOLUTION_12BIT,
+                                          NRF_SAADC_OVERSAMPLE_DISABLED,
+                                          NULL);
+    NRFX_ERR_CHECK(nrfx_err, "setting SAADC mode failed");
+                                            
+    nrfx_err = nrfx_saadc_buffer_set(&saadc_samples[0], 1);
+    NRFX_ERR_CHECK(nrfx_err, "setting SAADC buffer failed failed");
+
+    nrfx_err = nrfx_saadc_mode_trigger();
+    NRFX_ERR_CHECK(nrfx_err, "triggering SAADC mode failed");
+
+	// 1.465 results from combining NRF_SAADC_RESOLUTION_12BIT, NRF_SAADC_GAIN1_2, NRF_SAADC_REFERENCE_INTERNAL and NRF_SAADC_INPUT_VDDHDIV5  
+	int16_t battery_buffer_mV[1] = {saadc_samples[0] * 1.465};	
+
+	err = bt_gatt_notify(current_ble_conn, &remote_srv.attrs[2], ble_battery_voltage_flag, sizeof(ble_battery_voltage_flag));
+	ERR_CHECK(err, "BLE notification failed");
+
+	encode_16bit_to_8bit_array(&battery_buffer_mV[0], ble_send_array, 2);
+
+	err = bt_gatt_notify(current_ble_conn, &remote_srv.attrs[2], ble_send_array, sizeof(ble_send_array));
+	ERR_CHECK(err, "BLE notification failed");
+
+	// reinitialize SAADC for continous PPI triggered conversions
+	nrfx_saadc_uninit();
+	saadc_init();
+}
+
+void burst_ultrasonic_pulse_sequence() {
+	switch (pulse_number) {
+	case 4:
+		nrfx_pwm_simple_playback(&pwm_for_ultrasonic_pulses_instance, &pwm_4plus1pulses_seq, 1, NRFX_PWM_FLAG_STOP);
+		break;		
+	case 5:
+		nrfx_pwm_simple_playback(&pwm_for_ultrasonic_pulses_instance, &pwm_5pulses_seq, 1, NRFX_PWM_FLAG_STOP);
+		break;
+	case 19:
+		nrfx_pwm_simple_playback(&pwm_for_ultrasonic_pulses_instance, &pwm_19plus1pulses_seq, 1, NRFX_PWM_FLAG_STOP);
+		break;
+	case 20:
+		nrfx_pwm_simple_playback(&pwm_for_ultrasonic_pulses_instance, &pwm_20pulses_seq, 1, NRFX_PWM_FLAG_STOP);
+		break;
+	default:
+		break;
+	}
+}
+
 void turn_opamps_on() {
 	// simply setting the pin is to much inrush current resulting in a SOC reset, so the OpAmps must be slowly toggled on
 	k_msleep(100);
@@ -584,21 +686,16 @@ void turn_system_off() {
 	LOG_ERR("ERROR: System off failed\n");
 }
 
-// https://devzone.nordicsemi.com/f/nordic-q-a/50415/sending-32-bit-of-data-over-ble-onto-nrf52832
-void encode_16bit_to_8bit_array(int16_t *data_array, int8_t *ble_send_array, uint16_t data_length) {
-    memcpy(ble_send_array, data_array, data_length);
-}
-
 void error_handling() {
 	for (int i = 0; i < 5; i++) {
 		nrf_gpio_pin_toggle(ERROR_LED);
 		k_msleep(200);
 	}
-	nrf_gpio_pin_clear(ERROR_LED);
+	nrf_gpio_pin_set(ERROR_LED);
 }
 
 void main(void) {
-    uint8_t system_off_counter = TIME_TO_DEEPSLEEP_S;
+    uint8_t system_off_counter = TIME_TO_SYSTEM_OFF_S;
 
 	LOG_INF("Hello World! %s\n", CONFIG_BOARD);
 
@@ -631,62 +728,29 @@ void main(void) {
     ppi_init();
 	saadc_init();
     nfc_init();
-    nrfx_err = nrfx_pwm_init(&my_pwm, &pwm_peripheral_config, NULL, NULL);
+    nrfx_err = nrfx_pwm_init(&pwm_for_ultrasonic_pulses_instance, &pwm_for_ultrasonic_pulses_peripheral_config, NULL, NULL);
 	NRFX_ERR_CHECK(nrfx_err, "Cannot start PWM peripheral")
 	
 	turn_opamps_on();
 
 	while(true) {
-		if (ble_notif_enabled && saadc_buffer_is_full) {		
-			// send left sensor values	
-			err = bt_gatt_notify(current_conn, &remote_srv.attrs[2], ble_even_flag, sizeof(ble_even_flag));
-			ERR_CHECK(err, "BLE notification failed");
-
-			for (int i = 0; i < SAADC_BUF_SIZE; i+=2) {
-				encode_16bit_to_8bit_array(&saadc_samples[i], ble_send_array, 2);
-				if (!ble_notif_enabled) break;
-				err = bt_gatt_notify(current_conn, &remote_srv.attrs[2], ble_send_array, sizeof(ble_send_array));
-				ERR_CHECK(err, "BLE notification failed");
-			}
-
-			// send right sensor values
-			err = bt_gatt_notify(current_conn, &remote_srv.attrs[2], ble_uneven_flag, sizeof(ble_uneven_flag));
-			ERR_CHECK(err, "BLE notification failed");
-
-			for (int i = 1; i < SAADC_BUF_SIZE; i+=2) {
-				encode_16bit_to_8bit_array(&saadc_samples[i], ble_send_array, 2);
-				if (!ble_notif_enabled) break;
-				err = bt_gatt_notify(current_conn, &remote_srv.attrs[2], ble_send_array, sizeof(ble_send_array));
-				ERR_CHECK(err, "BLE notification failed");
-			}
+		if (ble_notif_enabled && saadc_buffer_is_full) {	
+			send_sensor_values(LEFT);
+			send_sensor_values(RIGHT);
+			get_and_send_battery_voltage_mV();
 			saadc_buffer_is_full = false;
 			k_msleep(1000);
-			nrfx_timer_enable(&timer_to_sample_saadc);
-			switch (pulse_number) {
-			case 4:
-				nrfx_pwm_simple_playback(&my_pwm, &pwm_4plus1pulses_seq, 1, NRFX_PWM_FLAG_STOP);
-				break;		
-			case 5:
-				nrfx_pwm_simple_playback(&my_pwm, &pwm_5pulses_seq, 1, NRFX_PWM_FLAG_STOP);
-				break;
-			case 19:
-				nrfx_pwm_simple_playback(&my_pwm, &pwm_19plus1pulses_seq, 1, NRFX_PWM_FLAG_STOP);
-				break;
-			case 20:
-				nrfx_pwm_simple_playback(&my_pwm, &pwm_20pulses_seq, 1, NRFX_PWM_FLAG_STOP);
-				break;
-			default:
-				break;
-			}
+			nrfx_timer_enable(&timer_to_sample_saadc_via_ppi_instance);
+			burst_ultrasonic_pulse_sequence();
 		}
 
-        if (NULL == current_conn) {
+        if (NULL == current_ble_conn) {
 			--system_off_counter;
 			if (0 == system_off_counter) {
 				turn_system_off();
 			} 			
 		} else {
-			system_off_counter = TIME_TO_DEEPSLEEP_S;
+			system_off_counter = TIME_TO_SYSTEM_OFF_S;
 		}
 
 		nrf_gpio_pin_toggle(SYSTEM_ON_LED);
