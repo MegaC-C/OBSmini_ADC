@@ -82,13 +82,13 @@ void error_handling();
 #define TRAFO_R2          NRF_GPIO_PIN_MAP(1, 9)
 #define OPAMPS_ON_OFF     NRF_GPIO_PIN_MAP(0, 15)
 
-#define SAADC_BUF_SIZE        8000
-#define SAADC_SAMPLINGRATE_US 5 // sample every 5 µs to get the max possible 200 kHz SAADC
+#define SAADC_BUF_SIZE        4000      // at 200kHz it takes 20ms to fill the 4000 buffer
+#define SAADC_SAMPLINGRATE_US 5         // sample every 5 µs to get the max possible 200 kHz SAADC
 #define MAX_REC_COUNT         1
 #define NDEF_MSG_BUF_SIZE     128
-#define PWM_MAX               25 // must be lower than (2^16)/2 = 32768, 1 as MSB is the problem
+#define PWM_MAX               25        // must be lower than (2^16)/2 = 32768, 1 as MSB is the problem
 #define TIME_TO_SYSTEM_OFF_S  30
-#define WDT_TIME_TO_RESET_MS  300000 // 5min = 5*60000ms
+#define WDT_TIME_TO_RESET_MS  300000    // = 5*60000ms = 5min
 #define LEFT                  0
 #define RIGHT                 1
 
