@@ -1,6 +1,6 @@
 {
-  "nrf-connect.topdir": "${nrf-connect.sdk:2.4.0}",
-"nrf-connect.toolchain.path": "${nrf-connect.toolchain:2.4.0}",
-"C_Cpp.clang_format_fallbackStyle": "{ BasedOnStyle: LLVM, UseTab: Never, IndentWidth: 4, TabWidth: 4, BreakBeforeBraces: Allman, ColumnLimit: 0, AlignConsecutiveAssignments: true, AlignConsecutiveMacros: {Enabled: true} }",
-"editor.formatOnSave": true
+    "nrf-connect.topdir": "${nrf-connect.sdk:2.4.0}",
+    "nrf-connect.toolchain.path": "${nrf-connect.toolchain:2.4.0}",
+    "C_Cpp.clang_format_fallbackStyle": "{ BasedOnStyle: LLVM, UseTab: Never, IndentWidth: 4, TabWidth: 4, BreakBeforeBraces: Allman, AllowShortIfStatementsOnASingleLine: true, ColumnLimit: 0, AlignConsecutiveAssignments: true, AlignConsecutiveMacros: {Enabled: true} }",
+    "editor.formatOnSave": true
 }
