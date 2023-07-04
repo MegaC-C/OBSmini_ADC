@@ -46,7 +46,7 @@
 // forward declarations	------------------------------------------------------------------------------------------------------------------------
 void ble_connected_handler(struct bt_conn *conn, uint8_t err);
 void ble_disconnected_handler(struct bt_conn *conn, uint8_t reason);
-void ble_chrc_ccc_cfg_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
+void ble_notification_changed_handler(const struct bt_gatt_attr *attr, uint16_t value);
 void error_handling();
 
 #define NRFX_ERR_CHECK(nrfx_err, msg)   \
@@ -140,7 +140,7 @@ BT_GATT_SERVICE_DEFINE(remote_srv,
                                               BT_GATT_CHRC_NOTIFY,
                                               BT_GATT_PERM_READ,
                                               NULL, NULL, NULL),
-                       BT_GATT_CCC(ble_chrc_ccc_cfg_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE));
+                       BT_GATT_CCC(ble_notification_changed_handler, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE));
 
 struct bt_conn *current_ble_conn;
 
@@ -148,7 +148,7 @@ const struct bt_data ad[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
     BT_DATA(BT_DATA_NAME_COMPLETE, BLE_DEVICE_NAME, BLE_DEVICE_NAME_LEN)};
 
-struct bt_conn_cb bluetooth_callbacks = {
+struct bt_conn_cb bluetooth_handlers = {
     .connected    = ble_connected_handler,
     .disconnected = ble_disconnected_handler};
 
@@ -156,7 +156,7 @@ const int8_t ble_left_sensor_flag[2]     = {0b00000000, 0b10000000};
 const int8_t ble_right_sensor_flag[2]    = {0b00000001, 0b10000000};
 const int8_t ble_battery_voltage_flag[2] = {0b00000010, 0b10000000};
 int8_t ble_send_array[2];
-bool ble_notif_enabled = false;
+bool ble_notifications_enabled = false;
 
 // SAADC ------------------------------------------------------------------------------------------------------------------------
 nrfx_saadc_adv_config_t saadc_peripheral_config = {
@@ -325,13 +325,13 @@ void ble_connected_handler(struct bt_conn *conn, uint8_t err)
     }
     LOG_INF("Connected.");
     current_ble_conn = bt_conn_ref(conn);
-    nrf_gpio_pin_clear(BLE_CONNECTED_LED);
+    nrf_gpio_pin_clear(BLUE_LED);
 }
 
 void ble_disconnected_handler(struct bt_conn *conn, uint8_t reason)
 {
     LOG_INF("Disconnected (reason: %d)", reason);
-    nrf_gpio_pin_set(BLE_CONNECTED_LED);
+    nrf_gpio_pin_set(BLUE_LED);
     if (current_ble_conn)
     {
         bt_conn_unref(current_ble_conn);
@@ -339,10 +339,10 @@ void ble_disconnected_handler(struct bt_conn *conn, uint8_t reason)
     }
 }
 
-void ble_chrc_ccc_cfg_changed_handler(const struct bt_gatt_attr *attr, uint16_t value)
+void ble_notification_changed_handler(const struct bt_gatt_attr *attr, uint16_t value)
 {
-    ble_notif_enabled = (value == BT_GATT_CCC_NOTIFY);
-    LOG_INF("Notifications %s", ble_notif_enabled ? "enabled" : "disabled");
+    ble_notifications_enabled = (value == BT_GATT_CCC_NOTIFY);
+    LOG_INF("Notifications %s", ble_notifications_enabled ? "enabled" : "disabled");
 }
 
 void saadc_handler(nrfx_saadc_evt_t const *p_event)
@@ -412,12 +412,12 @@ void nfc_handler(void *context,
         err = nfc_t2t_emulation_start();
         ERR_CHECK(err, "Cannot start NFC emulation!");
         nfc_detected = true;
-        nrf_gpio_pin_clear(NFC_FIELD_LED);
+        nrf_gpio_pin_clear(RED_LED);
         LOG_INF("pulse_number = %d", pulse_number);
         break;
     case NFC_T2T_EVENT_FIELD_OFF:
         nfc_detected = false;
-        nrf_gpio_pin_set(NFC_FIELD_LED);
+        nrf_gpio_pin_set(RED_LED);
         break;
     default:
         break;
@@ -595,7 +595,7 @@ void send_sensor_values(int left_right)
     for (int i = left_right; i < SAADC_BUF_SIZE; i += 2)
     {
         encode_16bit_to_8bit_array(&saadc_samples[i], ble_send_array, 2);
-        if (!ble_notif_enabled)
+        if (!ble_notifications_enabled)
             break;
         err = bt_gatt_notify(current_ble_conn, &remote_srv.attrs[2], ble_send_array, sizeof(ble_send_array));
         ERR_CHECK(err, "BLE notification failed");
@@ -681,7 +681,7 @@ void turn_system_off()
 {
     LOG_INF("Entering system off.\nApproach a NFC reader to restart.");
 
-    nrf_gpio_pin_set(SYSTEM_ON_LED);
+    nrf_gpio_pin_set(BLUE_LED);
     nrf_gpio_pin_set(OPAMPS_ON_OFF);
 
     // needed to finish logging before system off
@@ -699,7 +699,7 @@ void turn_system_off()
     // k_sleep will never exit, so below two lines will never be executed
     // if system off was correct. On the other hand if someting gone wrong
     // we will see it on terminal and LED.
-    nrf_gpio_pin_clear(SYSTEM_ON_LED);
+    nrf_gpio_pin_clear(BLUE_LED);
     LOG_ERR("ERROR: System off failed\n");
 }
 
@@ -707,10 +707,10 @@ void error_handling()
 {
     for (int i = 0; i < 5; i++)
     {
-        nrf_gpio_pin_toggle(ERROR_LED);
+        nrf_gpio_pin_toggle(RED_LED);
         k_msleep(200);
     }
-    nrf_gpio_pin_set(ERROR_LED);
+    nrf_gpio_pin_set(RED_LED);
 }
 
 void main(void)
@@ -737,7 +737,7 @@ void main(void)
     nrf_gpio_pin_set(RED_LED);
     nrf_gpio_pin_set(OPAMPS_ON_OFF);
 
-    bt_conn_cb_register(&bluetooth_callbacks);
+    bt_conn_cb_register(&bluetooth_handlers);
     err = bt_enable(NULL);
     ERR_CHECK(err, "Cannot enable BLE!");
     err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), NULL, 0);
@@ -755,7 +755,7 @@ void main(void)
 
     while (true)
     {
-        if (ble_notif_enabled && saadc_buffer_is_full)
+        if (ble_notifications_enabled && saadc_buffer_is_full)
         {
             send_sensor_values(LEFT);
             send_sensor_values(RIGHT);
@@ -779,7 +779,7 @@ void main(void)
             system_off_counter = TIME_TO_SYSTEM_OFF_S;
         }
 
-        nrf_gpio_pin_toggle(SYSTEM_ON_LED);
+        nrf_gpio_pin_toggle(BLUE_LED);
         nrfx_wdt_feed(&wdt_instance);
         k_msleep(1000);
     }
